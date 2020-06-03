@@ -38,7 +38,7 @@ mqttc.connect(host, port=1883, keepalive=60)
 mqttc.subscribe(topic, 0)
 
 while(1):
-    #mesg = "Hello, world!"
+    mesg = "Hello, world!"
     #mesg = readline()
     mqttc.publish(topic, mesg)
     print(mesg)

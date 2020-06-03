@@ -2,6 +2,9 @@
 #include "mbed_rpc.h"
 #include "fsl_port.h"
 #include "fsl_gpio.h"
+#include "MQTTNetwork.h"
+#include "MQTTmbed.h"
+#include "MQTTClient.h"
 #define UINT14_MAX        16383
 // FXOS8700CQ I2C address
 #define FXOS8700CQ_SLAVE_ADDR0 (0x1E<<1) // with pins SA0=0, SA1=0
@@ -49,6 +52,48 @@ void reply_messange(char *xbee_reply, char *messange);
 void check_addr(char *xbee_reply, char *messenger);
 void ACC(void);
 
+// GLOBAL VARIABLES for mqtt
+InterruptIn btn2(SW2);
+InterruptIn btn3(SW3);
+volatile int message_num = 0;
+volatile int arrivedcount = 0;
+volatile bool closed = false;
+
+Thread mqtt_thread(osPriorityHigh);
+EventQueue mqtt_queue;
+
+void messageArrived(MQTT::MessageData& md) {
+      MQTT::Message &message = md.message;
+      char msg[300];
+      sprintf(msg, "Message arrived: QoS%d, retained %d, dup %d, packetID %d\r\n", message.qos, message.retained, message.dup, message.id);
+      printf(msg);
+      wait_ms(1000);
+      char payload[300];
+      sprintf(payload, "Payload %.*s\r\n", message.payloadlen, (char*)message.payload);
+      printf(payload);
+      ++arrivedcount;
+}
+
+void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
+      message_num++;
+      MQTT::Message message;
+      char buff[100];
+      sprintf(buff, "QoS0 Hello, Python! #%d", message_num);
+      message.qos = MQTT::QOS0;
+      message.retained = false;
+      message.dup = false;
+      message.payload = (void*) buff;
+      message.payloadlen = strlen(buff) + 1;
+      int rc = client->publish(topic, message);
+
+      printf("rc:  %d\r\n", rc);
+      printf("Puslish message: %s\r\n", buff);
+}
+
+void close_mqtt() {
+      closed = true;
+}
+
 int main(){
   pc.baud(9600);
 
@@ -90,8 +135,23 @@ int main(){
   pc.printf("start\r\n");
   t.start(callback(&queue, &EventQueue::dispatch_forever));
 
+// try to connect mqtt
   const char* host = "localhost";
-  
+  printf("Connecting to TCP network...\r\n");
+      int rc = mqttNetwork.connect(host, 1883);
+      if (rc != 0) {
+            printf("Connection error.");
+            //return -1;
+      }
+      printf("Successfully connected!\r\n");
+
+      MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+      data.MQTTVersion = 3;
+      data.clientID.cstring = "velosity";
+
+  mqtt_thread.start(callback(&mqtt_queue, &EventQueue::dispatch_forever));
+      btn2.rise(mqtt_queue.event(&publish_message, &client));
+      btn3.rise(&close_mqtt);
 
   // Setup a serial interrupt function of receiving data from xbee
   xbee.attach(xbee_rx_interrupt, Serial::RxIrq);
